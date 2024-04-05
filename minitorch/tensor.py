@@ -103,7 +103,8 @@ class Tensor:
         self.f = backend
 
     def requires_grad_(self, x: bool) -> None:
-        self.history = History()
+        if x:
+            self.history = History()
 
     def requires_grad(self) -> bool:
         return self.history is not None

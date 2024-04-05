@@ -13,6 +13,7 @@ from tokenizers import ByteLevelBPETokenizer
 
 import minitorch
 from minitorch import DecoderLM
+from minitorch.tensor_functions import *
 from minitorch.cuda_kernel_ops import CudaKernelOps
 
 
@@ -109,7 +110,7 @@ def collate_batch(
     calculation purposes. (the MLE loss is computed on target tokens only.)
     between the source (weight = 0) and target (weight = 1) tokens for loss
     """
-    token_ids, tgt_token_mask = [], []
+    token_ids, tgt_token_mask, labels = [], [], []
     pad_token_id = tokenizer.vocab['<pad>']
     for example in examples:
         # token_ids_src = <de_token_ids> + <de_eos_id>
@@ -123,22 +124,50 @@ def collate_batch(
         # TODO
         # create token_ids, labels, and label_token_weights for every example
         # hint: based on token_ids_src, token_ids_tgt, and pad_token_id
-        raise NotImplementedError("Collate Function Not Implemented Yet")
-        # END ASSIGN2_2
+        
+        # input_ids is <de_token_ids> + <de_eos_id> + <en_token_ids> + <en_eos_id> + <pad_ids> where 
+        # the pad_ids makes the length of input_ids to be model_max_length
 
+        total_len = len(token_ids_src) + len(token_ids_tgt)
+        token_pad_length = model_max_length - total_len
+
+        # pad
+        token_id = token_ids_src + token_ids_tgt + [pad_token_id] * token_pad_length
+        token_mask = [0] * len(token_ids_src) + [1] * len(token_ids_tgt) + [0] * token_pad_length
+
+        token_id = token_id[:model_max_length]
+        token_mask = token_mask[:model_max_length]
+
+        input_id = token_id[:-1]
+        label = token_id[1:]
+        mask = token_mask[1:]
+
+        token_ids.append(input_id)
+        labels.append(label)
+        tgt_token_mask.append(mask)
+
+        # END ASSIGN2_2
     # BEGIN ASSIGN2_2
     # TODO
     # organzie token_ids, labels, and label_token_weights for this batch based
+
+    token_ids = minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids), backend)
+    labels = minitorch.tensor_functions.tensor_from_numpy(np.array(labels), backend)
+    tgt_token_mask = minitorch.tensor_functions.tensor_from_numpy(np.array(tgt_token_mask), backend)
+
     # on their example-wise results above, and return a python dict with them.from
-    raise NotImplementedError("Collate Function Not Implemented Yet")
-
     return {
-        'input_ids': minitorch.zeros((len(examples), model_max_length)),
-        'labels': minitorch.zeros((len(examples), model_max_length)),
-        'label_token_weights': minitorch.zeros((len(examples), model_max_length))
+        'input_ids': token_ids,
+        'labels': labels,
+        'label_token_weights': tgt_token_mask
     }
-    # END ASSIGN2_2
 
+    # return {
+    #     'input_ids': minitorch.zeros((len(examples), model_max_length)),
+    #     'labels': minitorch.zeros((len(examples), model_max_length)),
+    #     'label_token_weights': minitorch.zeros((len(examples), model_max_length))
+    # }
+    # END ASSIGN2_2
 
 def loss_fn(batch, model):
     """
@@ -162,7 +191,22 @@ def loss_fn(batch, model):
     # TODO
     # compute the MLE loss based on logits obtained by the model.
     # hint: using the function minitorch.nn.softmax_loss
-    raise NotImplementedError("Loss Function Not Implemented Yet")
+
+    labels = batch['labels']
+    label_token_weights = batch['label_token_weights']
+
+    loss = minitorch.nn.softmax_loss(logits.view(batch_size * seq_len, vocab_size), labels.view(batch_size * seq_len,))
+
+    loss = loss.view(batch_size, seq_len)
+
+    weighted_losses = loss * label_token_weights
+
+    non_zero_weights = label_token_weights.sum()
+    
+    average_loss = weighted_losses.sum() / non_zero_weights if non_zero_weights > 0 else 0
+
+    return average_loss
+
     # END ASSIGN2_2
 
 
@@ -276,8 +320,17 @@ def generate(model,
             # TODO
             # run the model with current token_ids, and predict the next token (gen_id)
             # hint: obtain the logits of next token, and take the argmax.
-            gen_id = 0
-            raise NotImplementedError("Generation Function Not Implemented Yet")
+
+            token_ids_tensor = tensor_from_numpy(np.array([token_ids]), backend)
+            
+            # get logits
+            logits = model(idx=token_ids_tensor)
+            # logits of the last token
+            logits_np = logits.to_numpy()[:, -1, :]
+
+            # get the argmax
+            gen_id = np.argmax(logits_np, axis=-1).item()
+
             # END ASSIGN2_2
 
             if gen_id == tokenizer.vocab[f'<eos_{tgt_key}>']:

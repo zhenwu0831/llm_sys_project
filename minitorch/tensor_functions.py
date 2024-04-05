@@ -140,7 +140,12 @@ class PowerScalar(Function):
                 Tensor containing the result of raising every element of a to scalar.
         """
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError
+        
+        # save the values for the backward pass
+        ctx.save_for_backward(a, scalar)
+
+        return a.f.pow_scalar_zip(a, scalar)
+
         ### END YOUR SOLUTION
 
     @staticmethod
@@ -166,7 +171,10 @@ class PowerScalar(Function):
         grad_a    = None
         
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError
+        
+        # compute the gradient
+        grad_a = grad_output * scalar * (a ** (scalar - 1))
+
         ### END YOUR SOLUTION
 
         return (grad_a, 0.0)
@@ -190,7 +198,14 @@ class Tanh(Function):
                 Tensor containing the element-wise tanh of a.
         """
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError
+
+        tanh_a =  a.f.tanh_map(a)
+
+        # save the values for the backward pass
+        ctx.save_for_backward(tanh_a)
+
+        return tanh_a
+
         ### END YOUR SOLUTION
     
     @staticmethod
@@ -210,7 +225,15 @@ class Tanh(Function):
                 gradient_for_a must be the correct element-wise gradient for tanh.
         """
         ### BEGIN YOUR SOLUTION
-        raise NotImplementedError
+        
+        # get the saved values
+        (tanh_a,) = ctx.saved_values
+
+        ones = minitorch.ones(tanh_a.shape, backend=tanh_a.backend)
+
+        # compute the gradient
+        return grad_output * (ones - (tanh_a ** 2))
+
         ### END YOUR SOLUTION
 
 class Sigmoid(Function):
@@ -376,6 +399,10 @@ class View(Function):
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, float]:
         (original,) = ctx.saved_values
+
+        if not grad_output._tensor.is_contiguous():
+            grad_output = grad_output.contiguous()
+
         return (
             minitorch.Tensor.make(
                 grad_output._tensor._storage, original, backend=grad_output.backend

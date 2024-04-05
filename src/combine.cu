@@ -104,11 +104,11 @@ __device__ float fn(int fn_id, float x, float y=0) {
       }
       case POW: {
 	// TODO
-        return x;
+        return powf(x, y);
       }
       case TANH: {
 	// TODO
-        return x;
+        return tanhf(x);
       }
       default: {
         return x + y;
@@ -158,7 +158,49 @@ __global__ void MatrixMultiplyKernel(
     const int* b_strides
 ) {
 
-    assert(false && "Not Implemented");
+    __shared__ float a_shared[TILE][TILE];
+    __shared__ float b_shared[TILE][TILE];
+
+    int bx = blockIdx.x, by = blockIdx.y;
+    int tx = threadIdx.x, ty = threadIdx.y;
+
+    int batch = blockIdx.z;
+    int a_batch_stride = a_shape[0] > 1 ? a_strides[0] : 0;
+    int b_batch_stride = b_shape[0] > 1 ? b_strides[0] : 0;
+
+    int row = bx * blockDim.x + tx;
+    int col = by * blockDim.y + ty;
+
+    float pvalue = 0;
+
+    for (int i = 0; i*TILE < a_shape[2]; ++i) {
+        int a_col = i * TILE + ty;
+        if(row < a_shape[1] && a_col < a_shape[2]) {
+            a_shared[tx][ty] = a_storage[batch * a_batch_stride + row * a_strides[1] + a_col * a_strides[2]];
+        } else {
+            a_shared[tx][ty] = 0.0;
+        }
+
+        int b_row = i * TILE + tx;
+        if(b_row < b_shape[1] && col < b_shape[2]) {
+            b_shared[tx][ty] = b_storage[batch * b_batch_stride + b_row * b_strides[1] + col * b_strides[2]];
+        } else {
+            b_shared[tx][ty] = 0.0;
+        }
+
+        __syncthreads(); 
+
+        for (int k = 0; k < TILE; ++k) {
+          if ((i * TILE + k) < a_shape[2] && (i * TILE + k) < b_shape[1])
+            pvalue += a_shared[tx][k] * b_shared[k][ty];
+        }
+
+        __syncthreads(); 
+    }
+
+    // 7. Write the computed value back to the global memory
+    if (row < out_shape[1] && col < out_shape[2]) 
+        out[batch * out_strides[0] + row * out_strides[1] + col * out_strides[2]] = pvalue;
 }
 
 
@@ -173,7 +215,32 @@ __global__ void mapKernel(
     int shape_size,
     int fn_id
 ) {
-    assert(false && "Not Implemented");
+    int out_index[MAX_DIMS];
+    int in_index[MAX_DIMS];
+    
+    /// BEGIN ASSIGN1_2
+    /// TODO
+    // Hints:
+    // 1. Compute the position in the output array that this thread will write to
+    int position = blockIdx.x * blockDim.x + threadIdx.x;
+    // additionally check if the position is valid
+    if (position >= out_size) {
+      return;
+    }
+    // 2. Convert the position to the out_index according to out_shape
+    to_index(position, out_shape, out_index, shape_size);
+    // 3. Broadcast the out_index to the in_index according to in_shape (optional in some cases)
+    broadcast_index(out_index, out_shape, in_shape, in_index, shape_size, shape_size);
+    // 4. Calculate the position of element in in_array according to in_index and in_strides
+    int element_in = index_to_position(in_index, in_strides, shape_size);
+    // 5. Calculate the position of element in out_array according to out_index and out_strides
+    int element_out = index_to_position(out_index, out_strides, shape_size);
+    // 6. Apply the unary function to the input element and write the output to the out memory
+    // use the previously defined float type
+    float input = in_storage[element_in];
+    out[element_out] = fn(fn_id, input);
+    
+    /// END ASSIGN1_2
 }
 
 
@@ -190,7 +257,39 @@ __global__ void reduceKernel(
     int shape_size,
     int fn_id
 ) {
-    assert(false && "Not Implemented");
+    // __shared__ double cache[BLOCK_DIM]; // Uncomment this line if you want to use shared memory to store partial results
+    int out_index[MAX_DIMS];
+
+    /// BEGIN ASSIGN1_2
+    /// TODO
+    // 1. Define the position of the output element that this thread or this block will write to
+    int position = blockIdx.x * blockDim.x + threadIdx.x;
+    // additionally check if the position is valid
+    if (position >= out_size) {
+      return;
+    }
+    // 2. Convert the out_pos to the out_index according to out_shape
+    to_index(position, out_shape, out_index, shape_size);
+    // 3. Initialize the reduce_value to the output element
+    float reduction_result = reduce_value;
+    // 4. Iterate over the reduce_dim dimension of the input array to compute the reduced value
+    for (int i = 0; i < a_shape[reduce_dim]; ++i) {
+        // hold the indices for accessing elements in the input array
+        int a_index[MAX_DIMS];
+        // copy the out_index to a_index
+        for (int j = 0; j < shape_size; ++j) {
+            a_index[j] = out_index[j];
+        }
+        // set the current dimension for reduction
+        a_index[reduce_dim] = i;
+        int a_position = index_to_position(a_index, a_strides, shape_size);
+
+        float input = a_storage[a_position];
+        reduction_result = fn(fn_id, reduction_result, input);
+    }
+    // 5. Write the reduced value to out memory
+    out[position] = reduction_result;
+    /// END ASSIGN1_2
 }
 
 __global__ void zipKernel(
@@ -209,7 +308,38 @@ __global__ void zipKernel(
     int b_shape_size,
     int fn_id
 ) {
-    assert(false && "Not Implemented");
+    int out_index[MAX_DIMS];
+    int a_index[MAX_DIMS];
+    int b_index[MAX_DIMS];
+
+    /// BEGIN ASSIGN1_2
+    /// TODO
+    // Hints:
+    // 1. Compute the position in the output array that this thread will write to
+    int position = blockIdx.x * blockDim.x + threadIdx.x;
+    // additionally check if the position is valid
+    if (position >= out_size) {
+      return;
+    }
+    // 2. Convert the position to the out_index according to out_shape
+    to_index(position, out_shape, out_index, out_shape_size);
+    // 3. Calculate the position of element in out_array according to out_index and out_strides
+    int element_out = index_to_position(out_index, out_strides, out_shape_size);
+    // 4. Broadcast the out_index to the a_index according to a_shape
+    broadcast_index(out_index, out_shape, a_shape, a_index, out_shape_size, a_shape_size);
+    // 5. Calculate the position of element in a_array according to a_index and a_strides
+    int element_a = index_to_position(a_index, a_strides, a_shape_size);
+    // 6. Broadcast the out_index to the b_index according to b_shape
+    broadcast_index(out_index, out_shape, b_shape, b_index, out_shape_size, b_shape_size);
+    // 7.Calculate the position of element in b_array according to b_index and b_strides
+    int element_b = index_to_position(b_index, b_strides, b_shape_size);
+    // 8. Apply the binary function to the input elements in a_array & b_array and write the output to the out memory
+    // use the previously defined float type
+    float input_a = a_storage[element_a];
+    float input_b = b_storage[element_b];
+    out[element_out] = fn(fn_id, input_a, input_b);
+
+    /// END ASSIGN1_2
 }
 
 

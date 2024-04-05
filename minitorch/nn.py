@@ -209,7 +209,14 @@ def GELU(input: Tensor) -> Tensor:
     https://pytorch.org/docs/stable/generated/torch.nn.GELU.html
     """
     ### BEGIN YOUR SOLUTION
-    raise NotImplementedError
+    power_term = pow(input, 3)
+
+    tanh_term = math.sqrt(2 / math.pi) * (input + 0.044715 * power_term)
+
+    activation = 0.5 * input * (1 + tanh_term.tanh())
+
+    return activation
+
     ### END YOUR SOLUTION
 
 
@@ -226,7 +233,10 @@ def logsumexp(input: Tensor, dim: int) -> Tensor:
             NOTE: minitorch functions/tensor functions typically keep dimensions if you provide a dimensions.
     """  
     ### BEGIN YOUR SOLUTION
-    raise NotImplementedError
+    max_val = max(input, dim)
+
+    return max_val + (input - max_val).exp().sum(dim).log()
+
     ### END YOUR SOLUTION
 
 
@@ -238,7 +248,11 @@ def one_hot(input: Tensor, num_classes: int) -> Tensor:
     Hint: You may want to use a combination of np.eye, tensor_from_numpy, 
     """
     ### BEGIN YOUR SOLUTION
-    raise NotImplementedError
+
+    one_hot = np.eye(num_classes)[input.to_numpy().astype(int)]
+
+    return tensor_from_numpy(one_hot, backend=input.backend)
+
     ### END YOUR SOLUTION
 
 
@@ -255,6 +269,14 @@ def softmax_loss(logits: Tensor, target: Tensor) -> Tensor:
     """
     result = None
     ### BEGIN YOUR SOLUTION
-    raise NotImplementedError
+
+    batch_size = logits.shape[0]
+    
+    # utilize the above one_hot function 
+    one_hot_target = one_hot(target, logits.shape[-1])
+
+    # calculate the cross entropy loss
+    result = (-1) * (one_hot_target * logsoftmax(logits, 1)).sum(1)
+    
     ### END YOUR SOLUTION
     return result.view(batch_size, )

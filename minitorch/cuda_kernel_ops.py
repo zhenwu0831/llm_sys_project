@@ -18,8 +18,8 @@ from .tensor_functions import tensor_from_numpy
 
 import ctypes
 import numpy as np
-import pycuda.autoinit
-import pycuda.driver as cuda
+# import pycuda.autoinit
+# import pycuda.driver as cuda
 
 # Load the shared library
 lib = ctypes.CDLL("minitorch/cuda_kernels/combine.so")

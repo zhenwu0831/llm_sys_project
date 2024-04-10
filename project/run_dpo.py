@@ -28,6 +28,9 @@ from minitorch.tensor_functions import *
 from minitorch.cuda_kernel_ops import CudaKernelOps
 from minitorch import DecoderLM
 
+from transformers import AutoTokenizer
+from tokenizers import ByteLevelBPETokenizer
+
 backend = minitorch.TensorBackend(CudaKernelOps)
 
 def pad_to_length(tensor: Tensor, length: int, pad_value: Union[int, float], dim: int = -1) -> Tensor:
@@ -123,8 +126,8 @@ class BasicTrainer(object):
         self.run_dir = run_dir
 
         tokenizer_name_or_path = config.model.tokenizer_name_or_path or config.model.name_or_path
-        rank0_print(f'Loading tokenizer {tokenizer_name_or_path}')
-        self.tokenizer = transformers.AutoTokenizer.from_pretrained(tokenizer_name_or_path, cache_dir=get_local_dir(config.local_dirs))
+        # rank0_print(f'Loading tokenizer {tokenizer_name_or_path}')
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name_or_path, cache_dir=get_local_dir(config.local_dirs))
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
@@ -141,15 +144,14 @@ class BasicTrainer(object):
         self.reference_model = reference_model
 
         self.train_iterator = get_batch_iterator(**data_iterator_kwargs, split='train', n_epochs=config.n_epochs, n_examples=config.n_examples, batch_size=config.batch_size, silent=rank != 0, cache_dir=get_local_dir(config.local_dirs))
-        rank0_print(f'Loaded train data iterator')
+        # rank0_print(f'Loaded train data iterator')
         self.eval_iterator = get_batch_iterator(**data_iterator_kwargs, split='test', n_examples=config.n_eval_examples, batch_size=config.eval_batch_size, silent=rank != 0, cache_dir=get_local_dir(config.local_dirs))
         self.eval_batches = list(self.eval_iterator)
-        rank0_print(f'Loaded {len(self.eval_batches)} eval batches of size {config.eval_batch_size}')
+        # rank0_print(f'Loaded {len(self.eval_batches)} eval batches of size {config.eval_batch_size}')
 
     def get_batch_samples(self, batch: Dict[str, Tensor]) -> Tuple[str, str]:
         """Generate samples from the policy (and reference model, if doing DPO training) for the given batch of inputs."""
 
-        # FSDP generation according to https://github.com/pytorch/pytorch/issues/100069
         ctx = lambda: (contextlib.nullcontext())
         with ctx():
             policy_output = self.policy.generate(
@@ -162,12 +164,10 @@ class BasicTrainer(object):
                     batch['prompt_input_ids'], attention_mask=batch['prompt_attention_mask'], max_length=self.config.max_length, do_sample=True, pad_token_id=self.tokenizer.pad_token_id)
 
         policy_output = pad_to_length(policy_output, self.config.max_length, self.tokenizer.pad_token_id)
-        # policy_output = all_gather_if_needed(policy_output, self.rank, self.world_size)
         policy_output_decoded = self.tokenizer.batch_decode(policy_output, skip_special_tokens=True)
 
         if self.config.loss.name in {'dpo', 'ipo'}:
             reference_output = pad_to_length(reference_output, self.config.max_length, self.tokenizer.pad_token_id)
-            # reference_output = all_gather_if_needed(reference_output, self.rank, self.world_size)
             reference_output_decoded = self.tokenizer.batch_decode(reference_output, skip_special_tokens=True)
         else:
             reference_output_decoded = []
@@ -180,7 +180,6 @@ class BasicTrainer(object):
            We do this to avoid doing two forward passes, because it's faster for FSDP.
         """
         concatenated_batch = concatenated_inputs(batch)
-        # all_logits = model(concatenated_batch['concatenated_input_ids'], attention_mask=concatenated_batch['concatenated_attention_mask']).logits.to(torch.float32)
         all_logits = model(concatenated_batch['concatenated_input_ids'], attention_mask=concatenated_batch['concatenated_attention_mask']).logits
         all_logps = _get_batch_logps(all_logits, concatenated_batch['concatenated_labels'], average_log_prob=False)
         chosen_logps = all_logps[:batch['chosen_input_ids'].shape[0]]
@@ -212,16 +211,11 @@ class BasicTrainer(object):
 
             reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
-            # chosen_rewards = all_gather_if_needed(chosen_rewards, self.rank, self.world_size)
-            # rejected_rewards = all_gather_if_needed(rejected_rewards, self.rank, self.world_size)
-            # reward_accuracies = all_gather_if_needed(reward_accuracies, self.rank, self.world_size)
-
             metrics[f'rewards_{train_test}/chosen'] = chosen_rewards.cpu().numpy().tolist()
             metrics[f'rewards_{train_test}/rejected'] = rejected_rewards.cpu().numpy().tolist()
             metrics[f'rewards_{train_test}/accuracies'] = reward_accuracies.cpu().numpy().tolist()
             metrics[f'rewards_{train_test}/margins'] = (chosen_rewards - rejected_rewards).cpu().numpy().tolist()
 
-            # policy_rejected_logps = all_gather_if_needed(policy_rejected_logps.detach(), self.rank, self.world_size)
             metrics[f'logps_{train_test}/rejected'] = policy_rejected_logps.cpu().numpy().tolist()
 
         elif loss_config.name == 'sft':
@@ -230,10 +224,8 @@ class BasicTrainer(object):
 
             losses = -policy_chosen_logps
 
-        # policy_chosen_logps = all_gather_if_needed(policy_chosen_logps.detach(), self.rank, self.world_size)
         metrics[f'logps_{train_test}/chosen'] = policy_chosen_logps.cpu().numpy().tolist()
 
-        # all_devices_losses = all_gather_if_needed(losses.detach(), self.rank, self.world_size)
         metrics[f'loss/{train_test}'] = losses.cpu().numpy().tolist()
 
         return losses.mean(), metrics
@@ -241,12 +233,9 @@ class BasicTrainer(object):
     def train(self):
         """Begin either SFT or DPO training, with periodic evaluation."""
 
-        rank0_print(f'Using {self.config.optimizer} optimizer')
-        # self.optimizer = getattr(torch.optim, self.config.optimizer)(self.policy.parameters(), lr=self.config.lr)
+        # rank0_print(f'Using {self.config.optimizer} optimizer')
         self.optimizer = minitorch.Adam(model.parameters(), lr=learning_rate)
-        # self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda=lambda step: min(1.0, (step + 1) / (self.config.warmup_steps + 1)))
-    
-        # torch.manual_seed(self.seed)
+
         np.random.seed(self.seed)
         random.seed(self.seed)
 
@@ -260,63 +249,25 @@ class BasicTrainer(object):
         for batch in self.train_iterator:
             #### BEGIN EVALUATION ####
             if self.example_counter % self.config.eval_every == 0 and (self.example_counter > 0 or self.config.do_first_eval):
-                # rank0_print(f'Running evaluation after {self.example_counter} train examples')
+
                 self.policy.eval()
 
                 all_eval_metrics = defaultdict(list)
-                # if self.config.sample_during_eval:
-                #     all_policy_samples, all_reference_samples = [], []
-                #     policy_text_table = wandb.Table(columns=["step", "prompt", "sample"])
-                #     if self.config.loss.name in {'dpo', 'ipo'}:
-                #         reference_text_table = wandb.Table(columns=["step", "prompt", "sample"])
 
                 for eval_batch in (tqdm.tqdm(self.eval_batches, desc='Computing eval metrics')):
-                    # local_eval_batch = slice_and_move_batch_for_device(eval_batch, self.rank, self.world_size, self.rank)
-                    # with torch.no_grad():
+
                     model.eval()
                     _, eval_metrics = self.get_batch_metrics(local_eval_batch, self.config.loss, train=False)
 
                     for k, v in eval_metrics.items():
                         all_eval_metrics[k].extend(v)
 
-                # if self.config.sample_during_eval:
-                #     if self.config.n_eval_model_samples < self.config.eval_batch_size:
-                #         # rank0_print(f'Warning: n_eval_model_samples ({self.config.n_eval_model_samples}) < eval_batch_size ({self.config.eval_batch_size}). Sampling from the first complete eval batch of prompts.')
-                #         sample_batches = self.eval_batches[:1]
-                #     else:
-                #         n_sample_batches = self.config.n_eval_model_samples // self.config.eval_batch_size
-                #         sample_batches = self.eval_batches[:n_sample_batches]
-                #     for eval_batch in (tqdm.tqdm(sample_batches, desc='Generating samples...')):
-                #         # local_eval_batch = slice_and_move_batch_for_device(eval_batch, self.rank, self.world_size, self.rank)
-                #         policy_samples, reference_samples = self.get_batch_samples(local_eval_batch)
-
-                #         all_policy_samples.extend(policy_samples)
-                #         all_reference_samples.extend(reference_samples)
-
-                #         for prompt, sample in zip(eval_batch['prompt'], policy_samples):
-                #             policy_text_table.add_data(self.example_counter, prompt, sample)
-                #         if self.config.loss.name in {'dpo', 'ipo'}:
-                #             for prompt, sample in zip(eval_batch['prompt'], reference_samples):
-                #                 reference_text_table.add_data(self.example_counter, prompt, sample)
-
                 mean_eval_metrics = {k: sum(v) / len(v) for k, v in all_eval_metrics.items()}
-                rank0_print(f'eval after {self.example_counter}: {formatted_dict(mean_eval_metrics)}')
-                # if self.config.sample_during_eval:                    
-                #     rank0_print(json.dumps(all_policy_samples[:10], indent=2))
-                #     if self.config.loss.name in {'dpo', 'ipo'}:
-                #         rank0_print(json.dumps(all_reference_samples[:10], indent=2))
-
-                # if self.config.wandb.enabled and self.rank == 0:
-                #     wandb.log(mean_eval_metrics, step=self.example_counter)
-
-                    # if self.config.sample_during_eval:
-                    #     wandb.log({"policy_samples": policy_text_table}, step=self.example_counter)
-                    #     if self.config.loss.name in {'dpo', 'ipo'}:
-                    #         wandb.log({"reference_samples": reference_text_table}, step=self.example_counter)
+                # rank0_print(f'eval after {self.example_counter}: {formatted_dict(mean_eval_metrics)}')
 
                 if self.example_counter > 0:
                     output_dir = os.path.join(self.run_dir, f'step-{self.example_counter}')
-                    rank0_print(f'creating checkpoint to write to {output_dir}...')
+                    # rank0_print(f'creating checkpoint to write to {output_dir}...')
                     self.save(output_dir, mean_eval_metrics)
             #### END EVALUATION ####
 
@@ -324,51 +275,23 @@ class BasicTrainer(object):
             self.policy.train()
 
             start_time = time.time()
-            # batch_metrics = defaultdict(list)
-            # for microbatch_idx in range(self.config.gradient_accumulation_steps):
-            #     # global_microbatch = slice_and_move_batch_for_device(batch, microbatch_idx, self.config.gradient_accumulation_steps, self.rank)
-            #     # local_microbatch = slice_and_move_batch_for_device(global_microbatch, self.rank, self.world_size, self.rank)
-            #     loss, metrics = self.get_batch_metrics(local_microbatch, self.config.loss, train=True)
-            #     (loss / self.config.gradient_accumulation_steps).backward()
-
-            #     for k, v in metrics.items():
-            #         batch_metrics[k].extend(v)
             loss, metrics = self.get_batch_metrics(batch, self.loss_config, train=True)
 
             grad_norm = self.clip_gradient()
             self.optimizer.step()
-            # self.scheduler.step()
             self.optimizer.zero_grad()
 
             step_time = time.time() - start_time
             examples_per_second = self.config.batch_size / step_time
-            # batch_metrics['examples_per_second'].append(examples_per_second)
-            # batch_metrics['grad_norm'].append(grad_norm)
 
             self.batch_counter += 1
             self.example_counter += self.config.batch_size
 
-            # if last_log is None or time.time() - last_log > self.config.minimum_log_interval_secs:
-            #     mean_train_metrics = {k: sum(v) / len(v) for k, v in batch_metrics.items()}
-            #     mean_train_metrics['counters/examples'] = self.example_counter
-            #     mean_train_metrics['counters/updates'] = self.batch_counter
-            #     rank0_print(f'train stats after {self.example_counter} examples: {formatted_dict(mean_train_metrics)}')
-
-            #     if self.config.wandb.enabled and self.rank == 0:
-            #         wandb.log(mean_train_metrics, step=self.example_counter)
-
-            #     last_log = time.time()
-            # else:
-            #     rank0_print(f'skipping logging after {self.example_counter} examples to avoid logging too frequently')
             if last_log is None or time.time() - last_log > self.loss_config["minimum_log_interval_secs"]:
-                rank0_print(f'train stats after {example_counter} examples: Loss: {loss.item()}, Grad norm: {grad_norm}, Examples/sec: {examples_per_second}')
+                # rank0_print(f'train stats after {example_counter} examples: Loss: {loss.item()}, Grad norm: {grad_norm}, Examples/sec: {examples_per_second}')
                 last_log = time.time()
             #### END TRAINING ####
 
-
-    # def clip_gradient(self):
-    #     """Clip the gradient norm of the parameters of a non-FSDP policy."""
-    #     return torch.nn.utils.clip_grad_norm_(self.policy.parameters(), self.config.max_grad_norm).item()
     def clip_gradients(self, max_grad_norm):
         # Compute the total norm of all gradients
         total_norm = 0
@@ -394,12 +317,8 @@ class BasicTrainer(object):
 
         os.makedirs(dir_name, exist_ok=True)
         output_path = os.path.join(dir_name, filename)
-        rank0_print(f'writing checkpoint to {output_path}...')
-        # torch.save({
-        #     'step_idx': step,
-        #     'state': state,
-        #     'metrics': metrics if metrics is not None else {},
-        # }, output_path)
+        # rank0_print(f'writing checkpoint to {output_path}...')
+
     
     def save(self, output_dir: Optional[str] = None, metrics: Optional[Dict] = None):
         """Save policy, optimizer, and scheduler state to disk."""
@@ -412,30 +331,177 @@ class BasicTrainer(object):
         self.write_state_dict(self.example_counter, optimizer_state_dict, metrics, 'optimizer.pt', output_dir)
         del optimizer_state_dict
 
-        # scheduler_state_dict = self.scheduler.state_dict()
-        # self.write_state_dict(self.example_counter, scheduler_state_dict, metrics, 'scheduler.pt', output_dir)
-        
+def get_dataset(dataset_name, model_max_length):
+    """
+    Obtrain IWSLT (de-en) dataset.
+    """
+    dataset = {
+        split: datasets.load_dataset(dataset_name, split=split)['translation']
+        for split in ['train', 'validation', 'test']
+    }
+    src_key, tgt_key = 'de', 'en'
 
-# class TensorParallelTrainer(BasicTrainer):
-#     def __init__(self, policy, config, seed, run_dir, reference_model=None, rank=0, world_size=1):
-#         """A trainer subclass that uses TensorParallel to shard the model across multiple GPUs.
+    dataset = {
+        split: [
+            example for example in dataset[split]
+            if len(example[src_key].split()) + len(
+                example[tgt_key].split()) < model_max_length
+        ] for split in dataset.keys()
+    }
 
-#            Based on https://github.com/BlackSamorez/tensor_parallel. Note sampling is extremely slow,
-#               see https://github.com/BlackSamorez/tensor_parallel/issues/66.
-#         """
-#         super().__init__(policy, config, seed, run_dir, reference_model, rank, world_size)
-        
-#         rank0_print('Sharding policy...')
-#         self.policy = tp.tensor_parallel(policy, sharded=True)
-#         if config.loss.name in {'dpo', 'ipo'}:
-#             rank0_print('Sharding reference model...')
-#             self.reference_model = tp.tensor_parallel(reference_model, sharded=False)
+    dataset['test'] = dataset['test'][:100]  # 6750
 
-#     def save(self, output_dir=None, metrics=None):
-#         """Save (unsharded) policy state to disk."""
-#         with tp.save_tensor_parallel(self.policy):
-#             policy_state_dict = self.policy.state_dict()
-    
-#         self.write_state_dict(self.example_counter, policy_state_dict, metrics, 'policy.pt', output_dir)
-#         del policy_state_dict
-        
+    print(json.dumps(
+        {'data_size': {split: len(dataset[split]) for split in dataset.keys()}},
+        indent=4))
+
+    return dataset, src_key, tgt_key
+
+
+def get_tokenizer(examples, vocab_size, workdir):
+    """
+    Trains a tokenizer on the provided dataset examples and saves the tokenizer configuration.
+
+    Parameters:
+    - examples: The dataset examples used for training the tokenizer.
+    - vocab_size: The desired vocabulary size for the tokenizer.
+    - src_key: The key used to access the source text within the dataset examples.
+    - tgt_key: The key used to access the target text within the dataset examples.
+    - workdir: The directory where the tokenizer should be saved.
+
+    Returns:
+    - tokenizer: The trained tokenizer with special tokens,
+        e.g., ("<eos_de>", "<eos_en>", "<pad>") if src_key and tgt_key are "de" and "en", respectively.
+    """
+    tokenizer = ByteLevelBPETokenizer()
+
+    # # Customized training
+    # tokenizer.train_from_iterator(
+    #     [[example[src_key], example[tgt_key]] for example in examples],
+    #     vocab_size=vocab_size,
+    #     special_tokens=[f'<eos_{src_key}>', f'<eos_{tgt_key}>', '<pad>'])
+
+    tokenizer.save(f'{workdir}/tokenizer.json')
+    json.dump({'model_type': 'gpt2'}, open(f'{workdir}/config.json', 'w'))
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        workdir,
+        eos_token=None,
+        bos_token=None,
+        pad_token=None,
+        unk_token=None)
+
+    return tokenizer
+
+def main(dataset_name='bbaaaa/iwslt14-de-en-preprocess',
+         model_max_length=40,
+         n_epochs=20,
+         batch_size=128,
+         learning_rate=0.02,
+         samples_per_epoch=20000,
+         n_vocab=10000,
+         n_embd=256,
+         seed=11111):
+    """
+    The main function to train and evaluate the model on a specified dataset.
+
+    Parameters:
+    - dataset_name: The name of the dataset to be used.
+    - model_max_length: The maximum sequence length the model can handle.
+    - n_epochs: The number of training epochs.
+    - batch_size: The number of examples in each batch.
+    - learning_rate: The learning rate for the optimizer.
+    - samples_per_epoch: Samples from the training dataset every epoch.
+    - n_vocab: The vocabulary size of the BPE tokenizer.
+    - n_embd: The embedding dimension.
+    - seed: Random seed.
+    """
+
+    np.random.seed(seed)
+    random.seed(seed)
+
+    workdir = f'./workdir_vocab{n_vocab}_lr{learning_rate}_embd{n_embd}'
+    os.makedirs(workdir, exist_ok=True)
+
+    # backend = minitorch.TensorBackend(CudaKernelOps)
+
+    config = {
+        'n_vocab': n_vocab,  # vocab_size
+        'n_embd': n_embd,  # n_embed
+        'n_head': 8,  # n_head
+        'n_positions': model_max_length,  # n_ctx == n_positions
+        # 'n_layer'     : 4,    # n_layer
+        'p_dropout': 0.1,  # x_pdrop
+        'ln_eps': 1e-5,  # layer_norm_epsilon
+        'backend': backend
+    }
+
+    model = DecoderLM(**config)
+    optimizer = minitorch.Adam(model.parameters(), lr=learning_rate)
+
+    dataset, src_key, tgt_key = get_dataset(
+        dataset_name=dataset_name, model_max_length=model_max_length)
+
+    tokenizer = get_tokenizer(
+        examples=dataset['train'],
+        vocab_size=config['n_vocab'],
+        workdir=workdir)
+
+    foo
+
+    collate_fn = partial(
+        collate_batch,
+        src_key=src_key,
+        tgt_key=tgt_key,
+        tokenizer=tokenizer,
+        model_max_length=model_max_length,
+        backend=backend)
+
+    for epoch_idx in range(n_epochs):
+        desc = f'epoch {epoch_idx} / {n_epochs}'
+
+        train(
+            model=model,
+            optimizer=optimizer,
+            examples=dataset['train'],
+            n_samples=samples_per_epoch,
+            batch_size=batch_size,
+            collate_fn=collate_fn,
+            desc=desc)
+
+        validation_loss = evaluate_loss(
+            model=model,
+            examples=dataset['validation'],
+            batch_size=batch_size,
+            collate_fn=collate_fn,
+            desc=desc)
+
+        print(f'Epoch {epoch_idx}: Validation Loss = {validation_loss}')
+
+        gen_sents = generate(
+            model=model,
+            examples=dataset['test'],
+            src_key=src_key,
+            tgt_key=tgt_key,
+            tokenizer=tokenizer,
+            model_max_length=model_max_length,
+            backend=backend,
+            desc=desc)
+
+        gen_examples = []
+        for example, gen_sent in zip(dataset['test'], gen_sents):
+            gen_examples.append({'example': example, 'gen': gen_sent})
+        json.dump(gen_examples, open(
+            f'{workdir}/gen_epoch{epoch_idx}.json', 'w'), indent=4)
+
+        eval_scores = evaluate_bleu(
+            examples=dataset['test'], gen_sents=gen_sents, tgt_key=tgt_key)
+        print(f'Epoch {epoch_idx}: {eval_scores}')
+
+        json.dump(
+            {'validation_loss': float(validation_loss), **eval_scores},
+            open(f'{workdir}/eval_results_epoch{epoch_idx}.json', 'w'))
+
+
+if __name__ == '__main__':
+    fire.Fire(main)

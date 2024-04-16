@@ -109,6 +109,10 @@ def collate_batch(
     ["label_token_weights"] The 'label_token_weights' are used to differentiate
     calculation purposes. (the MLE loss is computed on target tokens only.)
     between the source (weight = 0) and target (weight = 1) tokens for loss
+
+    TODO: 
+        outputs: [chosen token ids, prompt token ids, rejected token ids]
+    
     """
     token_ids, tgt_token_mask, labels = [], [], []
     pad_token_id = tokenizer.vocab['<pad>']
@@ -119,6 +123,11 @@ def collate_batch(
         # token_ids_tgt = <en_token_ids> + <en_eos_id>
         token_ids_tgt = tokenizer(
             f'{example[tgt_key]}<eos_{tgt_key}>')['input_ids']
+
+        # ------------ToDo------------
+        # token_ids_chosen = tokenizer(
+        #    f'{example[chosen_key]}<eos_{chosen_key}>')['input_ids']
+        # ------------ToDo------------
 
         # BEGIN ASSIGN2_2
         # TODO

@@ -188,6 +188,11 @@ def loss_fn(batch, model):
 
     Returns:
     - A scalar loss value for this batch, averaged across all target tokens.
+
+    # ------------ToDo------------
+    add preference loss
+    add preference model
+    # ------------ToDo------------
     """
 
     idx = batch['input_ids']
@@ -204,6 +209,9 @@ def loss_fn(batch, model):
     labels = batch['labels']
     label_token_weights = batch['label_token_weights']
 
+    # ------------ToDo------------
+    # loss = minitorch.nn.preference_loss()
+    # ------------ToDo------------
     loss = minitorch.nn.softmax_loss(logits.view(batch_size * seq_len, vocab_size), labels.view(batch_size * seq_len,))
 
     loss = loss.view(batch_size, seq_len)
@@ -231,6 +239,10 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc):
     - collate_fn: The function to collate data examples into batches.
     - batch_size: The number of examples in each batch.
     - desc: Description for the training process (used in progress bars).
+
+    # ------------ToDo------------
+    add preference policy model
+    # ------------ToDo------------
     """
     model.train()
     random.shuffle(examples)

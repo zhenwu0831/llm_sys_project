@@ -284,8 +284,8 @@ def softmax_loss(logits: Tensor, target: Tensor) -> Tensor:
 
 def preference_loss(policy_chosen_logps: Tensor,
                     policy_rejected_logps: Tensor,
-                    reference_chosen_logps: Tensor,
-                    reference_rejected_logps: Tensor,
+                    # reference_chosen_logps: Tensor,
+                    # reference_rejected_logps: Tensor,
                     beta: float,
                     label_smoothing: float = 0.0,
                     ipo: bool = False,

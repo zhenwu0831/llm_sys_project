@@ -5,7 +5,7 @@ from torch.nn.utils.rnn import pad_sequence
 from collections import defaultdict
 import tqdm
 import random
-from bs4 import BeautifulSoup, NavigableString
+# from bs4 import BeautifulSoup, NavigableString
 import numpy as np
 from typing import Dict, List, Optional, Iterator, Callable, Union, Tuple
 import os
@@ -14,6 +14,7 @@ import transformers
 import minitorch
 from minitorch import DecoderLM
 from minitorch.tensor_functions import *
+from minitorch.nn import *
 from minitorch.cuda_kernel_ops import CudaKernelOps
 
 import time
@@ -75,7 +76,13 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
     # rejected_tokens['input_ids'].append(tokenizer.eos_token_id)
     # rejected_tokens['attention_mask'].append(1)
 
-    longer_response_length = max(len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))
+    if len(chosen_tokens['input_ids']) - len(rejected_tokens['input_ids']) > 0:
+        longer_response_length = len(chosen_tokens['input_ids'])
+
+    else:
+        longer_response_length = len(rejected_tokens['input_ids'])
+
+    # longer_response_length = max(len(chosen_tokens['input_ids']), len(rejected_tokens['input_ids']))
 
     # if combined sequence is too long, truncate the prompt
     if len(prompt_tokens['input_ids']) + longer_response_length > max_length:
@@ -95,9 +102,9 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
     chosen_sequence_tokens = {k: prompt_tokens[k] + chosen_tokens[k] for k in chosen_tokens}
     rejected_sequence_tokens = {k: prompt_tokens[k] + rejected_tokens[k] for k in rejected_tokens}
     chosen_sequence_tokens['labels'] = chosen_sequence_tokens['input_ids'][:]
-    chosen_sequence_tokens['labels'][:len(prompt_tokens['input_ids'])] = [-100] * len(prompt_tokens['input_ids'])
+    chosen_sequence_tokens['labels'][:len(prompt_tokens['input_ids'])] = [0] * len(prompt_tokens['input_ids'])
     rejected_sequence_tokens['labels'] = rejected_sequence_tokens['input_ids'][:]
-    rejected_sequence_tokens['labels'][:len(prompt_tokens['input_ids'])] = [-100] * len(prompt_tokens['input_ids'])
+    rejected_sequence_tokens['labels'][:len(prompt_tokens['input_ids'])] = [0] * len(prompt_tokens['input_ids'])
 
     # print(chosen_sequence_tokens['labels'])
     
@@ -188,7 +195,7 @@ def collate_batch(
         token_id_chosen = batch['chosen_input_ids'] + [pad_token_id] * token_pad_length_chosen
         # print('token_id_chosen: ', len(batch['chosen_input_ids']))
         token_mask_chosen = [1] * len(batch['chosen_input_ids']) + [0] * token_pad_length_chosen
-        label_id_chosen = batch['chosen_labels'] + [-100] * token_pad_length_chosen
+        label_id_chosen = batch['chosen_labels'] + [-0] * token_pad_length_chosen
         token_id_chosen = token_id_chosen[:model_max_length]
         token_mask_chosen = token_mask_chosen[:model_max_length]
         
@@ -198,7 +205,7 @@ def collate_batch(
         
         token_id_rejected = batch['rejected_input_ids'] + [pad_token_id] * token_pad_length_rejected
         token_mask_rejected = [1] * len(batch['rejected_input_ids']) + [0] * token_pad_length_rejected
-        label_id_rejected = batch['rejected_labels'] + [-100] * token_pad_length_rejected
+        label_id_rejected = batch['rejected_labels'] + [0] * token_pad_length_rejected
         token_id_rejected = token_id_rejected[:model_max_length]
         token_mask_rejected = token_mask_rejected[:model_max_length]
         
@@ -210,7 +217,7 @@ def collate_batch(
     
 
     return {
-        # 'chosen_input_ids': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_chosen), backend),
+        'chosen_input_ids': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_chosen), backend),
         # 'chosen_masks': minitorch.tensor_functions.tensor_from_numpy(np.array(token_masks_chosen), backend),
         # 'chosen_labels': minitorch.tensor_functions.tensor_from_numpy(np.array(label_ids_chosen), backend),
         # 'rejected_input_ids': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_rejected), backend),
@@ -225,9 +232,48 @@ def collate_batch(
 #     concatenated_batch = {}
 #     concatenated_batch['input_ids'] = 
 
+# def numpy_gather(arr, dim, index):
+#     """
+#     Mimic torch.gather using numpy.
+
+#     Parameters:
+#         arr (numpy.ndarray): The source array from which to gather values.
+#         dim (int): The dimension along which to gather values.
+#         index (numpy.ndarray): The indices of elements to gather.
+
+#     Returns:
+#         numpy.ndarray: The gathered array.
+        
+#     TODO: check
+#     """
+#     # Check if the index array dimensions match the source array along the specified dimension
+#     if index.shape != arr.shape:
+#         raise ValueError("The shape of the index must match the shape of the source array.")
+
+#     # Transpose the array so that we gather along the first dimension
+#     if dim != 0:
+#         axes = np.arange(len(arr.shape))
+#         axes[0], axes[dim] = axes[dim], axes[0]
+#         arr = arr.transpose(axes)
+#         index = index.transpose(axes)
+
+#     # Create an array of indices that selects data along the gathered dimension
+#     idx = np.ogrid[tuple(slice(i) for i in index.shape)]
+
+#     # Replace the index array for the dimension we are gathering from
+#     idx[0] = index
+
+#     # Gather the data
+#     result = arr[tuple(idx)]
+
+#     # Transpose back if necessary
+#     if dim != 0:
+#         result = result.transpose(axes)
+
+#     return result
 def numpy_gather(arr, dim, index):
     """
-    Mimic torch.gather using numpy.
+    Mimic torch.gather using numpy, allowing index dimension size of 1 for broadcasting.
 
     Parameters:
         arr (numpy.ndarray): The source array from which to gather values.
@@ -236,12 +282,14 @@ def numpy_gather(arr, dim, index):
 
     Returns:
         numpy.ndarray: The gathered array.
-        
-    TODO: check
     """
-    # Check if the index array dimensions match the source array along the specified dimension
-    if index.shape != arr.shape:
-        raise ValueError("The shape of the index must match the shape of the source array.")
+    # Check if the index array can be broadcasted to the shape of the source array
+    if not all((s1 == s2 or s1 == 1 or s2 == 1) for s1, s2 in zip(arr.shape, index.shape)):
+        raise ValueError("Index cannot be broadcasted to match the array shape.")
+
+    # Broadcast index if necessary
+    if index.shape[dim] == 1:
+        index = np.broadcast_to(index, arr.shape)
 
     # Transpose the array so that we gather along the first dimension
     if dim != 0:
@@ -287,25 +335,33 @@ def loss_fn(batch, model):
     
     logits = model(idx=idx)
     
-    loss_mask = labels != -100
-    
     # chosen_logits = logits[:len(batch['chosen_input_ids'])]
     # rejected_logits = logits[len(batch['chosen_input_ids']):]
     
     labels = batch['concatenated_labels']
-    labels[labels == -100] = 0
+
+    loss_mask = labels != 0
+
+  
+    batch_size, seq_len, vocab_size = logits.shape
     
     
-    print('logits shape: ', logits.log_softmax(-1).shape)
+    print('logits shape: ', logsoftmax(logits, -1).shape)
     print('labels shape: ', labels.shape)
+
+    logits = logits.to_numpy()
+    labels = labels.to_numpy()
+    logits = torch.tensor(logits)
+    labels = torch.tensor(labels, dtype=torch.int64)
     
-    per_token_logps = numpy_gather(logits.log_softmax(-1).detach().numpy(), 2, labels.numpy())
+    # per_token_logps = numpy_gather(logsoftmax(logits, -1).detach().to_numpy(), 2, labels.view(batch_size, seq_len, 1).to_numpy())
+    per_token_logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
     
     print(per_token_logps.shape)
     
     batch_logps = (per_token_logps * loss_mask).sum(-1)
-    
-    batch_size, seq_len, vocab_size = logits.shape
+
+    print('batch_logps: ', batch_logps.shape)
     
     # BEGIN ASSIGN2_2
     # TODO
@@ -316,7 +372,8 @@ def loss_fn(batch, model):
     # label_token_weights = batch['label_token_weights']
 
     # ------------ToDo------------
-    loss, chosen_rewards, rejected_rewards = minitorch.nn.preference_loss(batch_logps[:len(batch['chosen_input_ids'])], batch_logps[len(batch['chosen_input_ids']):], beta=0.7, reference_free=False)
+    chosen_length = batch['chosen_input_ids'].shape[1]
+    loss, chosen_rewards, rejected_rewards = minitorch.nn.preference_loss(batch_logps[:chosen_length], batch_logps[chosen_length:], beta=0.7, reference_free=False)
     # ------------ToDo------------
     # loss = minitorch.nn.softmax_loss(logits.view(batch_size * seq_len, vocab_size), labels.view(batch_size * seq_len,))
 

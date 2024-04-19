@@ -308,7 +308,7 @@ def preference_loss(policy_chosen_logps: Tensor,
         The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
     """
     pi_logratios = policy_chosen_logps - policy_rejected_logps
-    ref_logratios = reference_chosen_logps - reference_rejected_logps
+    # ref_logratios = reference_chosen_logps - reference_rejected_logps
 
     if reference_free:
         ref_logratios = 0
@@ -321,7 +321,7 @@ def preference_loss(policy_chosen_logps: Tensor,
         # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
         losses = -logsoftmax(beta * logits, 1) * (1 - label_smoothing) - logsoftmax(-beta * logits, 1) * label_smoothing
 
-    chosen_rewards = beta * (policy_chosen_logps - reference_chosen_logps).detach()
-    rejected_rewards = beta * (policy_rejected_logps - reference_rejected_logps).detach()
+    chosen_rewards = beta * (policy_chosen_logps - 0).detach()
+    rejected_rewards = beta * (policy_rejected_logps - 0).detach()
 
     return losses, chosen_rewards, rejected_rewards

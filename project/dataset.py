@@ -16,6 +16,8 @@ from minitorch import DecoderLM
 from minitorch.tensor_functions import *
 from minitorch.cuda_kernel_ops import CudaKernelOps
 
+import time
+
 
 def get_imdb(data_path: str = 'data/imdb.json', split: str = None, silent: bool = False, cache_dir: str = None) -> Dict[str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
     """Load the Anthropic Helpful-Harmless dataset from Huggingface and convert it to the necessary format.
@@ -150,8 +152,10 @@ def collate_batch(
     
     """
     token_ids_chosen, token_masks_chosen, token_ids_rejected, token_masks_rejected = [], [], [], []
+    label_ids_chosen, label_ids_rejected = [], []
     # pad_token_id = tokenizer.vocab['<pad>']
-    pad_token_id = tokenizer.tokenize('<pad>')[0]
+    pad_token_id = tokenizer.encode('<pad>')[1]
+    # print(pad_token_id)
     for i in range(len(examples['prompt'])):
         # print('example: ', example)
         batch = tokenize_batch_element(examples['prompt'][i], examples['chosen'][i], examples['rejected'][i], 'keep_start', tokenizer, 512, 256)
@@ -172,39 +176,206 @@ def collate_batch(
         # total_len = len(token_ids_src) + len(token_ids_tgt)
         # token_pad_length = model_max_length - total_len
 
-        total_len_chosen = len(batch['chosen'])
+        total_len_chosen = len(batch['chosen_input_ids'])
         token_pad_length_chosen = model_max_length - total_len_chosen
         
-        total_len_rejected = len(batch['rejected'])
+        
+        
+        total_len_rejected = len(batch['rejected_input_ids'])
         token_pad_length_rejected = model_max_length - total_len_rejected
         
         # pad 
         token_id_chosen = batch['chosen_input_ids'] + [pad_token_id] * token_pad_length_chosen
+        # print('token_id_chosen: ', len(batch['chosen_input_ids']))
         token_mask_chosen = [1] * len(batch['chosen_input_ids']) + [0] * token_pad_length_chosen
+        label_id_chosen = batch['chosen_labels'] + [-100] * token_pad_length_chosen
         token_id_chosen = token_id_chosen[:model_max_length]
         token_mask_chosen = token_mask_chosen[:model_max_length]
         
         token_ids_chosen.append(token_id_chosen)
         token_masks_chosen.append(token_mask_chosen)
+        label_ids_chosen.append(label_id_chosen)
         
         token_id_rejected = batch['rejected_input_ids'] + [pad_token_id] * token_pad_length_rejected
         token_mask_rejected = [1] * len(batch['rejected_input_ids']) + [0] * token_pad_length_rejected
+        label_id_rejected = batch['rejected_labels'] + [-100] * token_pad_length_rejected
         token_id_rejected = token_id_rejected[:model_max_length]
         token_mask_rejected = token_mask_rejected[:model_max_length]
         
         token_ids_rejected.append(token_id_rejected)
         token_masks_rejected.append(token_mask_rejected)
+        label_ids_rejected.append(label_id_rejected)
         
-        
-    return {
-        'chosen_input_ids': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_chosen), backend),
-        'chosen_masks': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_chosen), backend),
-        'rejected_input_ids': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_rejected), backend),
-        'rejected_masks': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_rejected), backend)
-        
-    }
+        assert len(token_id_chosen) == model_max_length, print(len(token_id_chosen), total_len_chosen, token_pad_length_chosen)
     
 
+    return {
+        # 'chosen_input_ids': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_chosen), backend),
+        # 'chosen_masks': minitorch.tensor_functions.tensor_from_numpy(np.array(token_masks_chosen), backend),
+        # 'chosen_labels': minitorch.tensor_functions.tensor_from_numpy(np.array(label_ids_chosen), backend),
+        # 'rejected_input_ids': minitorch.tensor_functions.tensor_from_numpy(np.array(token_ids_rejected), backend),
+        # 'rejected_masks': minitorch.tensor_functions.tensor_from_numpy(np.array(token_masks_rejected), backend),
+        # 'rejected_labels': minitorch.tensor_functions.tensor_from_numpy(np.array(label_ids_rejected), backend),
+        'concatenated_input_ids': minitorch.tensor_functions.tensor_from_numpy(np.concatenate((np.array(token_ids_chosen), np.array(token_ids_rejected))), backend),
+        'concatenated_masks': minitorch.tensor_functions.tensor_from_numpy(np.concatenate((np.array(token_masks_chosen), np.array(token_masks_rejected))), backend),
+        'concatenated_labels': minitorch.tensor_functions.tensor_from_numpy(np.concatenate((np.array(label_ids_chosen), np.array(label_ids_rejected))), backend)
+    }
+
+# def concatenated(batch):
+#     concatenated_batch = {}
+#     concatenated_batch['input_ids'] = 
+
+def numpy_gather(arr, dim, index):
+    """
+    Mimic torch.gather using numpy.
+
+    Parameters:
+        arr (numpy.ndarray): The source array from which to gather values.
+        dim (int): The dimension along which to gather values.
+        index (numpy.ndarray): The indices of elements to gather.
+
+    Returns:
+        numpy.ndarray: The gathered array.
+        
+    TODO: check
+    """
+    # Check if the index array dimensions match the source array along the specified dimension
+    if index.shape != arr.shape:
+        raise ValueError("The shape of the index must match the shape of the source array.")
+
+    # Transpose the array so that we gather along the first dimension
+    if dim != 0:
+        axes = np.arange(len(arr.shape))
+        axes[0], axes[dim] = axes[dim], axes[0]
+        arr = arr.transpose(axes)
+        index = index.transpose(axes)
+
+    # Create an array of indices that selects data along the gathered dimension
+    idx = np.ogrid[tuple(slice(i) for i in index.shape)]
+
+    # Replace the index array for the dimension we are gathering from
+    idx[0] = index
+
+    # Gather the data
+    result = arr[tuple(idx)]
+
+    # Transpose back if necessary
+    if dim != 0:
+        result = result.transpose(axes)
+
+    return result
+
+def loss_fn(batch, model):
+    """
+    The MLE loss for a batch.
+
+    Parameters:
+    - batch: The result of collate_fn, a dict with "input_ids", "labels", and "label_token_weights".
+    - model: The model to be trained.
+
+    Returns:
+    - A scalar loss value for this batch, averaged across all target tokens.
+
+    # ------------ToDo------------
+    add preference loss
+    add preference model
+    # ------------ToDo------------
+    """
+
+    idx = batch['concatenated_input_ids']
+    idx.requires_grad_(True)
+    
+    logits = model(idx=idx)
+    
+    loss_mask = labels != -100
+    
+    # chosen_logits = logits[:len(batch['chosen_input_ids'])]
+    # rejected_logits = logits[len(batch['chosen_input_ids']):]
+    
+    labels = batch['concatenated_labels']
+    labels[labels == -100] = 0
+    
+    
+    print('logits shape: ', logits.log_softmax(-1).shape)
+    print('labels shape: ', labels.shape)
+    
+    per_token_logps = numpy_gather(logits.log_softmax(-1).detach().numpy(), 2, labels.numpy())
+    
+    print(per_token_logps.shape)
+    
+    batch_logps = (per_token_logps * loss_mask).sum(-1)
+    
+    batch_size, seq_len, vocab_size = logits.shape
+    
+    # BEGIN ASSIGN2_2
+    # TODO
+    # compute the MLE loss based on logits obtained by the model.
+    # hint: using the function minitorch.nn.softmax_loss
+
+    # labels = batch['labels']
+    # label_token_weights = batch['label_token_weights']
+
+    # ------------ToDo------------
+    loss, chosen_rewards, rejected_rewards = minitorch.nn.preference_loss(batch_logps[:len(batch['chosen_input_ids'])], batch_logps[len(batch['chosen_input_ids']):], beta=0.7, reference_free=False)
+    # ------------ToDo------------
+    # loss = minitorch.nn.softmax_loss(logits.view(batch_size * seq_len, vocab_size), labels.view(batch_size * seq_len,))
+
+    loss = loss.view(batch_size, seq_len)
+
+    # weighted_losses = loss * label_token_weights
+
+    # non_zero_weights = label_token_weights.sum()
+    
+    # average_loss = weighted_losses.sum() / non_zero_weights if non_zero_weights > 0 else 0
+
+    return loss, chosen_rewards, rejected_rewards
+
+
+def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc):
+    """
+    Trains the model on the provided examples.
+
+    Parameters:
+    - model: The model to be trained.
+    - optimizer: The optimizer used for updating the model's parameters.
+    - examples: The dataset examples used for training.
+    - n_samples: The random samples to train from "examples".
+    - collate_fn: The function to collate data examples into batches.
+    - batch_size: The number of examples in each batch.
+    - desc: Description for the training process (used in progress bars).
+
+    # ------------ToDo------------
+    add preference policy model
+    # ------------ToDo------------
+    """
+    model.train()
+    random.shuffle(examples)
+    examples = examples[:n_samples]
+
+    for i in (prog_bar := tqdm.trange(
+            0, len(examples), batch_size, desc=f'Training ({desc})')):
+        batch = collate_fn(examples=examples[i:i + batch_size])
+
+        t0 = time.time()
+        optimizer.zero_grad()
+        loss = loss_fn(batch=batch, model=model)
+        t1 = time.time()
+
+        loss.backward()
+        t2 = time.time()
+
+        optimizer.step()
+        t3 = time.time()
+
+        print(f"Forward: {t1 - t0}")
+        print(f"Backward: {t2 - t1}")
+        print(f"Opt.step: {t3 - t2}")
+
+        batch_time = time.time() - t0
+        prog_bar.set_postfix(
+            tokens_per_sec=np.prod(batch['input_ids'].shape) / batch_time,
+            loss=loss.item(),
+            lr=optimizer.lr)
 
 if __name__ == '__main__':
     dataset = get_imdb()
@@ -214,7 +385,31 @@ if __name__ == '__main__':
     # tokenizer.pad_token = '<pad>'
     # print(tokenizer.eos_token_id)
     batch = tokenize_batch_element(dataset['train'][0]['prompt'], dataset['train'][0]['chosen'], dataset['train'][0]['rejected'], 'keep_start', tokenizer, 512, 256)
- 
+    print('chosen_input_ids: ', batch['chosen_input_ids'])
+    
+    print('chosen: ', batch)
+    
     # print('dataset: ', dataset['train'][:10])
     backend = minitorch.TensorBackend(CudaKernelOps)
-    collate_batch(dataset['train'][:10], tokenizer=tokenizer, model_max_length=512, backend=backend)
+    batch = collate_batch(dataset['train'][:10], tokenizer=tokenizer, model_max_length=512, backend=backend)
+    
+    config = {
+        'n_vocab': 50257,  # vocab_size
+        'n_embd': 256,  # n_embed
+        'n_head': 8,  # n_head
+        'n_positions': 512,  # n_ctx == n_positions
+        # 'n_layer'     : 4,    # n_layer
+        'p_dropout': 0.1,  # x_pdrop
+        'ln_eps': 1e-5,  # layer_norm_epsilon
+        'backend': backend
+    }
+    model = DecoderLM(**config)
+    loss, _, _ = loss_fn(batch, model)
+    # a = torch.randn(3,5)
+    # print('a', a)
+    # index = torch.tensor([[0, 0, 0, 1, 1], [1, 0, 0, 1, 1], [2, 0, 0, 1, 1]])
+    # out1 = torch.gather(a, 0, index)
+    # out2 = numpy_gather(a.numpy(), 0, index.numpy())
+    # print('out1', out1)
+    # print('out2', out2)
+    

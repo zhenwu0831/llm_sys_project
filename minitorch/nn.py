@@ -289,7 +289,8 @@ def preference_loss(policy_chosen_logps: Tensor,
                     beta: float,
                     label_smoothing: float = 0.0,
                     ipo: bool = False,
-                    reference_free: bool = False) -> Tuple[Tensor, Tensor, Tensor]:
+                    # reference_free: bool = False
+                   ) -> Tuple[Tensor, Tensor, Tensor]:
     """Compute the DPO loss for a batch of policy and reference model log probabilities.
 
     Args:
@@ -310,16 +311,16 @@ def preference_loss(policy_chosen_logps: Tensor,
     pi_logratios = policy_chosen_logps - policy_rejected_logps
     # ref_logratios = reference_chosen_logps - reference_rejected_logps
 
-    if reference_free:
-        ref_logratios = 0
+    # if reference_free:
+    #     ref_logratios = 0
 
-    logits = pi_logratios - ref_logratios  # also known as h_{\pi_\theta}^{y_w,y_l}
+    logits = pi_logratios  # also known as h_{\pi_\theta}^{y_w,y_l}
 
     if ipo:
         losses = (logits - 1/(2 * beta)) ** 2  # Eq. 17 of https://arxiv.org/pdf/2310.12036v2.pdf
     else:
         # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
-        losses = -logsoftmax(beta * logits, 1) * (1 - label_smoothing) - logsoftmax(-beta * logits, 1) * label_smoothing
+        losses = -logsoftmax(beta * logits, 0) * (1 - label_smoothing) - logsoftmax(-beta * logits, 0) * label_smoothing
 
     chosen_rewards = beta * (policy_chosen_logps - 0).detach()
     rejected_rewards = beta * (policy_rejected_logps - 0).detach()

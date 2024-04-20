@@ -47,7 +47,8 @@ class Function:
         raw_vals = []
         need_grad = False
         for v in vals:
-            if v.requires_grad():
+            # print(type(v))
+            if v.requires_grad:
                 need_grad = True
             raw_vals.append(v.detach())
 

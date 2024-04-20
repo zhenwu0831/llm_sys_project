@@ -154,7 +154,16 @@ class CudaKernelOps(TensorOps):
         def ret(a: Tensor, dim: int) -> Tensor:
             out_shape = list(a.shape)
             out_shape[dim] = 1
-            out = a.zeros(tuple(out_shape))
+
+            if isinstance(a, Tensor):
+                out = a.zeros(tuple(out_shape))
+            else:
+                print("Error: Object is not an instance of Tensor")
+                print('a TYPE: ', type(a))
+                out = a
+
+            
+            # out = a.zeros(tuple(out_shape))
 
             lib.tensorReduce.argtypes = [
                 np.ctypeslib.ndpointer(dtype=datatype, ndim=1, flags='C_CONTIGUOUS'),  # out_storage

@@ -33,6 +33,7 @@ from .tensor_functions import (
     tensor,
     tensor_from_numpy,
     zeros_tensor_from_numpy,
+    ones_tensor_from_numpy,
     PowerScalar,
     Tanh
 )
@@ -352,6 +353,17 @@ class Tensor:
             out = zero(self.shape)
         else:
             out = zero(shape)
+        out._type_(self.backend)
+        return out
+
+    def ones(self, shape: Optional[UserShape] = None) -> Tensor:
+        def one(shape: UserShape) -> Tensor:
+            return ones_tensor_from_numpy(shape, self.backend)
+
+        if shape is None:
+            out = one(self.shape)
+        else:
+            out = one(shape)
         out._type_(self.backend)
         return out
 

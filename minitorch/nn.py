@@ -315,14 +315,12 @@ def preference_loss(policy_chosen_logps: Tensor,
     #     ref_logratios = 0
 
     logits = pi_logratios  # also known as h_{\pi_\theta}^{y_w,y_l}
+    print(logits)
 
-    if ipo:
-        losses = (logits - 1/(2 * beta)) ** 2  # Eq. 17 of https://arxiv.org/pdf/2310.12036v2.pdf
-    else:
-        # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
-        losses = -logsoftmax(beta * logits, 0) * (1 - label_smoothing) - logsoftmax(-beta * logits, 0) * label_smoothing
+    # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
+    losses = -logsoftmax(beta * logits, 0) * (1 - label_smoothing) - logsoftmax(-beta * logits, 0) * label_smoothing
 
-    chosen_rewards = beta * (policy_chosen_logps - 0).detach()
-    rejected_rewards = beta * (policy_rejected_logps - 0).detach()
+    # chosen_rewards = beta * (policy_chosen_logps - 0).detach()
+    # rejected_rewards = beta * (policy_rejected_logps - 0).detach()
 
-    return losses, chosen_rewards, rejected_rewards
+    return losses

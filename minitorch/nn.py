@@ -315,7 +315,7 @@ def preference_loss(policy_chosen_logps: Tensor,
     #     ref_logratios = 0
 
     logits = pi_logratios  # also known as h_{\pi_\theta}^{y_w,y_l}
-    print(logits)
+    # print(logits)
 
     # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
     losses = -logsoftmax(beta * logits, 0) * (1 - label_smoothing) - logsoftmax(-beta * logits, 0) * label_smoothing

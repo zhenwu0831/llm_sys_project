@@ -336,7 +336,11 @@ class DecoderLM(Module):
         position_embeddings = self.position_embeddings(position_ids)
         assert position_embeddings.shape == (1, seq_len, self.n_embd)
 
+        # print('idx in forward grad check: ', idx.grad!=None)
+
         token_embeddings = self.token_embeddings(idx)
+
+        # print('after token embedding grad check: ', token_embeddings.grad!=None)
 
         # add the token and position embeddings
         embedding = token_embeddings + position_embeddings
@@ -344,17 +348,25 @@ class DecoderLM(Module):
         # apply dropout
         embedding = self.dropout(embedding)
 
+        # print('after drop out grad check: ', embedding.grad!=None)
+
         # Pass through each transformer Layer
         layer1 = self.t_layer_1(embedding)
+        # print('after layer1 grad check: ', layer1.grad!=None)
         layer2 = self.t_layer_2(layer1)
+        # print('after layer2 grad check: ', layer2.grad!=None)
         layer3 = self.t_layer_3(layer2)
+        # print('after layer3 grad check: ', layer3.grad!=None)
         layer4 = self.t_layer_4(layer3)
+        # print('after layer4 grad check: ', layer4.grad!=None)
         # Final LayerNorm
         layer4 = layer4.view(batch_size * seq_len, self.n_embd)
         layer5 = self.ln(layer4)
+        # print('after layer5 grad check: ', layer5.grad!=None)
         # Get correct shape
         logits = self.lm_head(layer5)
-        logits = logits.view(batch_size, seq_len, self.n_vocab)
+        # print('after lm head grad check: ', logits.grad!=None)
+        logits = logits.contiguous().view(batch_size, seq_len, self.n_vocab)
 
         return logits
         ### END SOLUTION

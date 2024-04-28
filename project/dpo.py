@@ -11,6 +11,8 @@ import random
 import numpy as np
 from typing import Dict, List, Optional, Iterator, Callable, Union, Tuple
 from sacrebleu.metrics import BLEU
+from transformers import AutoTokenizer
+# from tokenizers import ByteLevelBPETokenizer
 import os
 import transformers
 import sys
@@ -50,6 +52,27 @@ def get_imdb(data_path: str = 'data/imdb.json', split: str = None, silent: bool 
 
     return final_dataset
 
+def get_tokenizer(examples, vocab_size,workdir):
+    tokenizer = ByteLevelBPETokenizer()
+
+    # Customized training
+    tokenizer.train_from_iterator(
+        [' '.join([example['prompt'], example['chosen'], example['rejected']]) for example in examples],
+        vocab_size=vocab_size,
+        special_tokens=['<|endoftext|>', '<pad>'])
+
+    tokenizer.save(f'{workdir}/tokenizer.json')
+    json.dump({'model_type': 'gpt2'}, open(f'{workdir}/config.json', 'w'))
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        workdir,
+        eos_token=None,
+        bos_token=None,
+        pad_token=None,
+        unk_token=None)
+
+    return tokenizer 
+
 def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_mode: str, tokenizer, max_length: int, max_prompt_length: int) -> Dict:
     """Tokenize a single batch element.
     
@@ -61,9 +84,11 @@ def tokenize_batch_element(prompt: str, chosen: str, rejected: str, truncation_m
          the sum of the length of the prompt and the chosen/rejected response, with -100 for the
          prompt tokens.
     """
-    chosen_tokens = tokenizer(chosen, add_special_tokens=False)
-    rejected_tokens = tokenizer(rejected, add_special_tokens=False)
-    prompt_tokens = tokenizer(prompt, add_special_tokens=False)
+    chosen_tokens = tokenizer(chosen)
+    rejected_tokens = tokenizer(rejected)
+    prompt_tokens = tokenizer(prompt)
+
+    # eos_token_id = tokenizer.vocab['<|endoftext|>']
 
     # assert tokenizer.eos_token_id not in prompt_tokens['input_ids'], f"Prompt contains EOS token: {prompt}"
     # assert tokenizer.eos_token_id not in chosen_tokens['input_ids'], f"Chosen response contains EOS token: {chosen}"
@@ -171,7 +196,7 @@ def collate_batch(
     # print(pad_token_id)
     for i in range(len(examples['prompt'])):
         # print('example: ', example)
-        batch = tokenize_batch_element(examples['prompt'][i], examples['chosen'][i], examples['rejected'][i], 'keep_start', tokenizer, 512, 256)
+        batch = tokenize_batch_element(examples['prompt'][i], examples['chosen'][i], examples['rejected'][i], 'keep_start', tokenizer, 25, 8)
 
         # ------------ToDo------------
         # token_ids_chosen = tokenizer(
@@ -241,6 +266,7 @@ def collate_batch(
         # 'concatenated_labels': minitorch.tensor_functions.tensor_from_numpy(np.concatenate((np.array(label_ids_chosen), np.array(label_ids_rejected))), backend)
     }
 
+
 def gather(input, dim, index):
     batch_size, seq_len = index.shape
     mask = index.zeros(shape=input.shape)  # Assuming Minitorch has a method to create a zero tensor
@@ -277,6 +303,7 @@ def loss_fn(batch, model, backend):
     add preference model
     # ------------ToDo------------
     """
+    
     chosen_idx = batch['chosen_input_ids']
     chosen_idx.requires_grad_(True)
     rejected_idx = batch['rejected_input_ids']
@@ -306,7 +333,7 @@ def loss_fn(batch, model, backend):
     # print('train loss: ', batch_loss)
     return batch_loss
 
-def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, backend):
+def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, backend, epoch):
     """
     Trains the model on the provided examples.
 
@@ -334,7 +361,7 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, b
         t0 = time.time()
         optimizer.zero_grad()
         loss = loss_fn(batch=batch, model=model, backend=backend)
-        print(f'Batch {count}: Train Loss = {loss}')
+        print(f'Batch {count}: Train Loss = {loss.item()}')
         losses.append(loss.item())
         t1 = time.time()
 
@@ -350,13 +377,15 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, b
         # print(f"Opt.step: {t3 - t2}")
 
         batch_time = time.time() - t0
-
+        wandb.log({"train_batch_loss": loss.item(), "epoch": epoch, "batch": count})
         count += 1
+
+        
     train_loss = np.mean(losses)
     # print('val loss: ', loss)
     return train_loss
 
-def evaluate_loss(model, examples, batch_size, collate_fn, desc, backend):
+def evaluate_loss(model, examples, batch_size, collate_fn, desc, backend, epoch):
     """
     Evaluates the model on the provided examples and computes the average loss.
 
@@ -373,14 +402,18 @@ def evaluate_loss(model, examples, batch_size, collate_fn, desc, backend):
     model.eval()
     losses = []
 
-    for i in range(len(examples)):
+    count = 0
+    for i in range(0, len(examples), batch_size):
         batch = collate_fn(examples=examples[i:i + batch_size])
         loss = loss_fn(batch=batch, model=model, backend=backend)
 
         losses.append(loss.item())
         # prog_bar.set_postfix(loss=loss.item())
+        wandb.log({"val_batch_loss": loss.item(), "epoch": epoch, "batch": count})
+        print(f'Batch {count}: Validation Loss = {loss.item()}')
+        count += 1
     loss = np.mean(losses)
-    # print('val loss: ', loss)
+    
     return loss
 
 # TODO: modify generate for our need
@@ -435,7 +468,8 @@ def generate(model,
 
             # END ASSIGN2_2
 
-            if gen_id == tokenizer.vocab['<|endoftext|>']:
+            # if gen_id == tokenizer.vocab['<|endoftext|>']:
+            if gen_id == tokenizer.eos_token_id:
                 break
             else:
                 token_ids.append(gen_id)
@@ -459,16 +493,16 @@ def evaluate_bleu(examples, gen_sents, target='chosen'):
     return {
         'bleu': BLEU().corpus_score(
             hypotheses=gen_sents,
-            references=[[example[target] for example in examples]]).score
+            references=[[example['prompt'] + ' ' + example[target] for example in examples]]).score
     }
 
-def main(model_max_length=512,
+def main(model_max_length=25,
          n_epochs=50,
-         batch_size=10,
+         batch_size=100,
          learning_rate=0.02,
          samples_per_epoch=2,
-         n_vocab=10000,
-         n_embd=256,
+         n_vocab=50257,
+         n_embd=64,
          seed=11111):
     """
     The main function to train and evaluate the model on a specified dataset.
@@ -505,9 +539,9 @@ def main(model_max_length=512,
 
     config = {
         'n_vocab': 50257,  # vocab_size
-        'n_embd': 256,  # n_embed
-        'n_head': 8,  # n_head
-        'n_positions': 512,  # n_ctx == n_positions
+        'n_embd': 64,  # n_embed
+        'n_head': 2,  # n_head
+        'n_positions': 25,  # n_ctx == n_positions
         # 'n_layer'     : 4,    # n_layer
         'p_dropout': 0.1,  # x_pdrop
         'ln_eps': 1e-5,  # layer_norm_epsilon
@@ -519,13 +553,20 @@ def main(model_max_length=512,
 
     dataset = get_imdb(data_path='data/sampled_data.json')
     tokenizer = transformers.AutoTokenizer.from_pretrained('gpt2-large', special_tokens={'pad_token': '<pad>'})
+    # tokenizer = get_tokenizer(
+    #     examples=dataset['train'],
+    #     vocab_size=config['n_vocab'],
+    #     workdir=workdir
+    # )
 
-    collate_fn = partial(collate_batch, tokenizer=tokenizer, model_max_length=512, backend=backend)
+    collate_fn = partial(collate_batch, tokenizer=tokenizer, model_max_length=25, backend=backend)
 
-    sys.stdout.flush()
+    # sys.stdout.flush()
 
     for epoch_idx in range(n_epochs):
         desc = f'epoch {epoch_idx} / {n_epochs}'
+
+        print(f'Epoch {epoch_idx}: Training...')
 
         train_loss = train(
             model=model,
@@ -535,9 +576,14 @@ def main(model_max_length=512,
             batch_size=batch_size,
             collate_fn=collate_fn,
             desc=desc,
-            backend=backend)
+            backend=backend,
+            epoch=epoch_idx)
         
         wandb.log({"train_loss": train_loss, "epoch": epoch_idx})
+
+        print(f'Epoch {epoch_idx}: Training Loss = {train_loss}')
+
+        print(f'Epoch {epoch_idx}: Validating...')
 
         validation_loss = evaluate_loss(
             model=model,
@@ -545,17 +591,20 @@ def main(model_max_length=512,
             batch_size=batch_size,
             collate_fn=collate_fn,
             desc=desc,
-            backend=backend)
+            backend=backend,
+            epoch=epoch_idx)
 
         print(f'Epoch {epoch_idx}: Validation Loss = {validation_loss}')
 
         wandb.log({"validation_loss": validation_loss, "epoch": epoch_idx})
 
+        print(f'Epoch {epoch_idx}: Generating...')
+
         gen_sents = generate(
             model=model,
             examples=dataset['test'],
             tokenizer=tokenizer,
-            max_length=21,
+            max_length=25,
             backend=backend,
             desc=desc)
 
@@ -584,6 +633,6 @@ def main(model_max_length=512,
             open(f'{workdir}/eval_results_epoch{epoch_idx}.json', 'w'))
 
 if __name__ == '__main__':
-    wandb.init(project='run_dpo_imdb', entity='zhenwu', name='initial try')
+    wandb.init(project='run_dpo_imdb', entity='zhenwu', name='interactive dpo py')
     main()
     wandb.finish()

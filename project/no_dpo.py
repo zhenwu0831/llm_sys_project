@@ -484,11 +484,14 @@ def evaluate_loss(model, examples, batch_size, collate_fn, desc, backend):
     model.eval()
     losses = []
 
-    for i in range(len(examples)):
+    count = 0
+    for i in range(0, len(examples), batch_size):
         batch = collate_fn(examples=examples[i:i + batch_size])
         loss = loss_fn(batch=batch, model=model, backend=backend)
 
         losses.append(loss.item())
+        print(f'Batch {count}: Validation Loss = {loss.item()}')
+        count += 1
         # prog_bar.set_postfix(loss=loss.item())
     loss = np.mean(losses)
     # print('val loss: ', loss)
@@ -574,17 +577,17 @@ def evaluate_bleu(examples, gen_sents, target='chosen'):
     return {
         'bleu': BLEU().corpus_score(
             hypotheses=gen_sents,
-            references=[[example[target] for example in examples]]).score
+            references=[[example['prompt'] + ' ' + example[target] for example in examples]]).score
     }
 
 
 def main(model_max_length=25,
          n_epochs=50,
-         batch_size=10,
+         batch_size=100,
          learning_rate=0.02,
          samples_per_epoch=2,
          n_vocab=50257,
-         n_embd=256,
+         n_embd=64,
          seed=11111):
     """
     The main function to train and evaluate the model on a specified dataset.
@@ -643,6 +646,8 @@ def main(model_max_length=25,
     for epoch_idx in range(n_epochs):
         desc = f'epoch {epoch_idx} / {n_epochs}'
 
+        print(f'Epoch {epoch_idx}: Training...')
+
         train_loss = train(
             model=model,
             optimizer=optimizer,
@@ -655,6 +660,10 @@ def main(model_max_length=25,
         
         wandb.log({"train_loss": train_loss, "epoch": epoch_idx})
 
+        print(f'Epoch {epoch_idx}: Training Loss = {train_loss}')
+
+        print(f'Epoch {epoch_idx}: Validating...')
+
         validation_loss = evaluate_loss(
             model=model,
             examples=dataset['validation'],
@@ -666,6 +675,8 @@ def main(model_max_length=25,
         print(f'Epoch {epoch_idx}: Validation Loss = {validation_loss}')
 
         wandb.log({"validation_loss": validation_loss, "epoch": epoch_idx})
+        
+        print(f'Epoch {epoch_idx}: Generating...')
 
         gen_sents = generate(
             model=model,
@@ -701,7 +712,7 @@ def main(model_max_length=25,
 
 
 if __name__ == '__main__':
-    wandb.init(project='run_no_dpo_imdb', entity='kellyshiiii')
+    wandb.init(project='run_dpo_imdb', entity='zhenwu', name='no_dpo_imdb')
     main()
     wandb.finish()
 

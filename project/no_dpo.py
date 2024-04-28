@@ -416,7 +416,7 @@ def loss_fn(batch, model, backend):
     return average_loss
 
 
-def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, backend):
+def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, backend, epoch):
     """
     Trains the model on the provided examples.
 
@@ -460,14 +460,14 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, b
         # print(f"Opt.step: {t3 - t2}")
 
         batch_time = time.time() - t0
-
+        wandb.log({"train_batch_loss": loss.item(), "epoch": epoch, "batch": count})
         count += 1
     train_loss = np.mean(losses)
     # print('train loss: ', loss)
     return train_loss
 
 
-def evaluate_loss(model, examples, batch_size, collate_fn, desc, backend):
+def evaluate_loss(model, examples, batch_size, collate_fn, desc, backend, epoch):
     """
     Evaluates the model on the provided examples and computes the average loss.
 
@@ -490,6 +490,7 @@ def evaluate_loss(model, examples, batch_size, collate_fn, desc, backend):
         loss = loss_fn(batch=batch, model=model, backend=backend)
 
         losses.append(loss.item())
+        wandb.log({"val_batch_loss": loss.item(), "epoch": epoch, "batch": count})
         print(f'Batch {count}: Validation Loss = {loss.item()}')
         count += 1
         # prog_bar.set_postfix(loss=loss.item())
@@ -617,7 +618,7 @@ def main(model_max_length=25,
     np.random.seed(seed)
     random.seed(seed)
 
-    workdir = f'./workdir'
+    workdir = f'./workdir_no'
     os.makedirs(workdir, exist_ok=True)
 
     backend = minitorch.TensorBackend(CudaKernelOps)
@@ -656,7 +657,8 @@ def main(model_max_length=25,
             batch_size=batch_size,
             collate_fn=collate_fn,
             desc=desc,
-            backend=backend)
+            backend=backend,
+            epoch=epoch_idx)
         
         wandb.log({"train_loss": train_loss, "epoch": epoch_idx})
 
@@ -670,7 +672,8 @@ def main(model_max_length=25,
             batch_size=batch_size,
             collate_fn=collate_fn,
             desc=desc,
-            backend=backend)
+            backend=backend,
+            epoch=epoch_idx)
 
         print(f'Epoch {epoch_idx}: Validation Loss = {validation_loss}')
 
@@ -712,7 +715,7 @@ def main(model_max_length=25,
 
 
 if __name__ == '__main__':
-    wandb.init(project='run_dpo_imdb', entity='zhenwu', name='no_dpo_imdb')
+    wandb.init(project='run_dpo_imdb', entity='zhenwu', name='no_dpo')
     main()
     wandb.finish()
 

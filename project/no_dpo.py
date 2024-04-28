@@ -171,7 +171,7 @@ def collate_batch(
     # print(pad_token_id)
     for i in range(len(examples['prompt'])):
         # print('example: ', example)
-        batch = tokenize_batch_element(examples['prompt'][i], examples['chosen'][i], examples['rejected'][i], 'keep_start', tokenizer, 512, 256)
+        batch = tokenize_batch_element(examples['prompt'][i], examples['chosen'][i], examples['rejected'][i], 'keep_start', tokenizer, 25, 8)
 
         # ------------ToDo------------
         # token_ids_chosen = tokenizer(
@@ -578,12 +578,12 @@ def evaluate_bleu(examples, gen_sents, target='chosen'):
     }
 
 
-def main(model_max_length=512,
+def main(model_max_length=25,
          n_epochs=50,
          batch_size=10,
          learning_rate=0.02,
          samples_per_epoch=2,
-         n_vocab=10000,
+         n_vocab=50257,
          n_embd=256,
          seed=11111):
     """
@@ -623,7 +623,7 @@ def main(model_max_length=512,
         'n_vocab': 50257,  # vocab_size
         'n_embd': 64,  # n_embed
         'n_head': 2,  # n_head
-        'n_positions': 512,  # n_ctx == n_positions
+        'n_positions': 25,  # n_ctx == n_positions
         # 'n_layer'     : 4,    # n_layer
         'p_dropout': 0.1,  # x_pdrop
         'ln_eps': 1e-5,  # layer_norm_epsilon
@@ -636,7 +636,7 @@ def main(model_max_length=512,
     dataset = get_imdb(data_path='data/sampled_data.json')
     tokenizer = transformers.AutoTokenizer.from_pretrained('gpt2-large', special_tokens={'pad_token': '<pad>'})
 
-    collate_fn = partial(collate_batch, tokenizer=tokenizer, model_max_length=512, backend=backend)
+    collate_fn = partial(collate_batch, tokenizer=tokenizer, model_max_length=25, backend=backend)
 
     sys.stdout.flush()
 

@@ -31,22 +31,25 @@ def get_imdb(data_path: str = 'data/imdb.json', split: str = None, silent: bool 
        For this dataset, the sft_target is just the chosen response.
     """
     print(f'Loading IMDB RLHF dataset...')
-    dataset = datasets.load_dataset("json", data_files=f"/home/jiaxins1/11868/llm_sys_project/{data_path}")
+    dataset = datasets.load_dataset("json", data_files=f"/home/zhenwu/11868/llm_sys_project/{data_path}")
     train_testvalid = dataset['train'].train_test_split(test_size=0.2)
 
     # Split the remaining part into test and validation equally
     test_valid = train_testvalid['test'].train_test_split(test_size=0.5)
     
-    # Create a new dataset dictionary with all three splits
+    # Slice the test split to only include the first 100 samples
+    test_subset = test_valid['test'].select(range(100))
+    
+    # Create a new dataset dictionary with all three splits, including the sliced test subset
     final_dataset = datasets.DatasetDict({
         'train': train_testvalid['train'],  # 80% of the data
-        'test': test_valid['test'],         # 10% of the data
+        'test': test_subset,                # Only the first 100 samples of the data
         'validation': test_valid['train']   # 10% of the data
     })
     print(f"Size of train split: {len(final_dataset['train'])}")
     print(f"Size of test split: {len(final_dataset['test'])}")
     print(f"Size of validation split: {len(final_dataset['validation'])}")
-    print('done loading dataset!')
+    print('done')
 
     return final_dataset
 
@@ -558,6 +561,7 @@ def generate(model,
                 token_ids.append(gen_id)
 
         gen_sents.append(tokenizer.decode(token_ids))
+        print(f'Generated sentence {i}')
 
     return gen_sents
 

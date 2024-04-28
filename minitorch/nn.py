@@ -123,7 +123,7 @@ def softmax(input: Tensor, dim: int) -> Tensor:
     # END ASSIGN4.4
 
 
-def logsoftmax(input: Tensor, dim: int) -> Tensor:
+def logsoftmax(input: Tensor, dim: int, eps: float = 1e-5) -> Tensor:
     r"""
     Compute the log of the softmax as a tensor.
 
@@ -141,7 +141,7 @@ def logsoftmax(input: Tensor, dim: int) -> Tensor:
     # ASSIGN4.4
     e = input
     mx = Max.apply(e, tensor([dim]))
-    lse = (e - mx).exp().sum(dim=dim).log() + mx
+    lse = ((e - mx).exp().sum(dim=dim)+ eps).log() + mx
     return e - lse
     # END ASSIGN4.4
 
@@ -252,6 +252,25 @@ def one_hot(input: Tensor, num_classes: int) -> Tensor:
     one_hot = np.eye(num_classes)[input.to_numpy().astype(int)]
 
     return tensor_from_numpy(one_hot, backend=input.backend)
+
+#     ### END YOUR SOLUTION
+
+# def one_hot(input: Tensor, num_classes: int) -> Tensor:
+#     """Takes a Tensor containing indices of shape (*) and returns a tensor of shape (*, num_classes) 
+#     that contains zeros except a 1 where the index of last dimension matches the corresponding value of the input tensor.
+#     This is analogous to torch.nn.functional.one_hot (which contains helpful examples you may want to play around with)
+
+#     Hint: You may want to use a combination of np.eye, tensor_from_numpy, 
+#     """
+#     ### BEGIN YOUR SOLUTION
+#     backend = input.backend
+#     input = input.to_numpy().astype(int)
+#     input = np.clip(input, 0, num_classes - 1)
+
+#     # one_hot = np.eye(num_classes)[input.to_numpy().astype(int)]
+#     one_hot = np.eye(num_classes)[input]
+
+#     return tensor_from_numpy(one_hot, backend=backend)
 
     ### END YOUR SOLUTION
 

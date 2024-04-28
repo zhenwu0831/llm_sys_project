@@ -444,7 +444,7 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, b
         t0 = time.time()
         optimizer.zero_grad()
         loss = loss_fn(batch=batch, model=model, backend=backend)
-        print(f'Batch {count}: Train Loss = {loss}')
+        print(f'Batch {count}: Train Loss = {loss.item()}')
         losses.append(loss.item())
         t1 = time.time()
 
@@ -675,7 +675,7 @@ def main(model_max_length=25,
         print(f'Epoch {epoch_idx}: Validation Loss = {validation_loss}')
 
         wandb.log({"validation_loss": validation_loss, "epoch": epoch_idx})
-        
+
         print(f'Epoch {epoch_idx}: Generating...')
 
         gen_sents = generate(

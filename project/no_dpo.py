@@ -24,6 +24,8 @@ from minitorch.tensor_functions import *
 from minitorch.nn import *
 from minitorch.cuda_kernel_ops import CudaKernelOps
 
+from pynvml import *
+
 import time
 
 def get_imdb(data_path: str = 'data/imdb.json', split: str = None, silent: bool = False, cache_dir: str = None) -> Dict[str, Dict[str, Union[List[Tuple[int, int]], List[str], str]]]:
@@ -31,7 +33,7 @@ def get_imdb(data_path: str = 'data/imdb.json', split: str = None, silent: bool 
        For this dataset, the sft_target is just the chosen response.
     """
     print(f'Loading IMDB RLHF dataset...')
-    dataset = datasets.load_dataset("json", data_files=f"/home/zhenwu/11868/llm_sys_project/{data_path}")
+    dataset = datasets.load_dataset("json", data_files=f"/home/jiaxins1/11868/llm_sys_project/{data_path}")
     train_testvalid = dataset['train'].train_test_split(test_size=0.2)
 
     # Split the remaining part into test and validation equally
@@ -464,6 +466,16 @@ def train(model, optimizer, examples, n_samples, collate_fn, batch_size, desc, b
 
         batch_time = time.time() - t0
         wandb.log({"train_batch_loss": loss.item(), "epoch": epoch, "batch": count})
+
+        nvmlInit()
+        h = nvmlDeviceGetHandleByIndex(0)
+        info = nvmlDeviceGetMemoryInfo(h)
+        print(f'total    : {info.total}')
+        print(f'free     : {info.free}')
+        print(f'used     : {info.used}')
+        wandb.log({"total mem": info.total, "epoch": epoch, "batch": count})
+        wandb.log({"mem free": info.free, "epoch": epoch, "batch": count})
+        wandb.log({"mem used": info.used, "epoch": epoch, "batch": count})
         count += 1
     train_loss = np.mean(losses)
     # print('train loss: ', loss)
@@ -704,7 +716,7 @@ def main(model_max_length=25,
         # eval_scores_rejected = evaluate_bleu(
         #     examples=dataset['test'], gen_sents=gen_sents, target='rejected')
         
-        print(f'Epoch {epoch_idx}: Chosen Eval {eval_scores_chosen}, Rejected Eval {eval_scores_rejected}')
+        print(f'Epoch {epoch_idx}: Chosen Eval {eval_scores_chosen}')
 
         wandb.log({"chosen_bleu": eval_scores_chosen, "epoch": epoch_idx})  # Separate plot for chosen BLEU
         # wandb.log({"rejected_bleu": eval_scores_rejected, "epoch": epoch_idx})  # Separate plot for rejected BLEU
@@ -719,7 +731,7 @@ def main(model_max_length=25,
 
 
 if __name__ == '__main__':
-    wandb.init(project='run_dpo_imdb', entity='zhenwu', name='no_dpo')
+    wandb.init(project='run_dpo_imdb', entity='kellyshiiii', name='no_dpo')
     main()
     wandb.finish()
 

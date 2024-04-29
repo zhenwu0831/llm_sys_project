@@ -701,7 +701,7 @@ def main(model_max_length=25,
             model=model,
             examples=dataset['test'],
             tokenizer=tokenizer,
-            max_length=21,
+            max_length=25,
             backend=backend,
             desc=desc)
 

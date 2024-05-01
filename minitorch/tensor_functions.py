@@ -47,7 +47,8 @@ class Function:
         raw_vals = []
         need_grad = False
         for v in vals:
-            if v.requires_grad():
+            # print(type(v))
+            if v.requires_grad:
                 need_grad = True
             raw_vals.append(v.detach())
 
@@ -424,8 +425,10 @@ class Copy(Function):
 class MatMul(Function):
     @staticmethod
     def forward(ctx: Context, t1: Tensor, t2: Tensor) -> Tensor:
-        ctx.save_for_backward(t1, t2)
-        return t1.f.matrix_multiply(t1, t2)
+        t1_cont = t1.contiguous()
+        t2_cont = t2.contiguous()
+        ctx.save_for_backward(t1_cont, t2_cont)
+        return t1_cont.f.matrix_multiply(t1_cont, t2_cont)
 
     @staticmethod
     def backward(ctx: Context, grad_output: Tensor) -> Tuple[Tensor, Tensor]:

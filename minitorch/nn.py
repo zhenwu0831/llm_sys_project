@@ -123,7 +123,7 @@ def softmax(input: Tensor, dim: int) -> Tensor:
     # END ASSIGN4.4
 
 
-def logsoftmax(input: Tensor, dim: int) -> Tensor:
+def logsoftmax(input: Tensor, dim: int, eps: float = 1e-5) -> Tensor:
     r"""
     Compute the log of the softmax as a tensor.
 
@@ -141,7 +141,7 @@ def logsoftmax(input: Tensor, dim: int) -> Tensor:
     # ASSIGN4.4
     e = input
     mx = Max.apply(e, tensor([dim]))
-    lse = (e - mx).exp().sum(dim=dim).log() + mx
+    lse = ((e - mx).exp().sum(dim=dim)+ eps).log() + mx
     return e - lse
     # END ASSIGN4.4
 
@@ -253,6 +253,25 @@ def one_hot(input: Tensor, num_classes: int) -> Tensor:
 
     return tensor_from_numpy(one_hot, backend=input.backend)
 
+#     ### END YOUR SOLUTION
+
+# def one_hot(input: Tensor, num_classes: int) -> Tensor:
+#     """Takes a Tensor containing indices of shape (*) and returns a tensor of shape (*, num_classes) 
+#     that contains zeros except a 1 where the index of last dimension matches the corresponding value of the input tensor.
+#     This is analogous to torch.nn.functional.one_hot (which contains helpful examples you may want to play around with)
+
+#     Hint: You may want to use a combination of np.eye, tensor_from_numpy, 
+#     """
+#     ### BEGIN YOUR SOLUTION
+#     backend = input.backend
+#     input = input.to_numpy().astype(int)
+#     input = np.clip(input, 0, num_classes - 1)
+
+#     # one_hot = np.eye(num_classes)[input.to_numpy().astype(int)]
+#     one_hot = np.eye(num_classes)[input]
+
+#     return tensor_from_numpy(one_hot, backend=backend)
+
     ### END YOUR SOLUTION
 
 
@@ -280,3 +299,47 @@ def softmax_loss(logits: Tensor, target: Tensor) -> Tensor:
     
     ### END YOUR SOLUTION
     return result.view(batch_size, )
+
+
+def preference_loss(policy_chosen_logps: Tensor,
+                    policy_rejected_logps: Tensor,
+                    # reference_chosen_logps: Tensor,
+                    # reference_rejected_logps: Tensor,
+                    beta: float,
+                    label_smoothing: float = 0.0,
+                    ipo: bool = False,
+                    # reference_free: bool = False
+                   ) -> Tuple[Tensor, Tensor, Tensor]:
+    """Compute the DPO loss for a batch of policy and reference model log probabilities.
+
+    Args:
+        policy_chosen_logps: Log probabilities of the policy model for the chosen responses. Shape: (batch_size,)
+        policy_rejected_logps: Log probabilities of the policy model for the rejected responses. Shape: (batch_size,)
+        reference_chosen_logps: Log probabilities of the reference model for the chosen responses. Shape: (batch_size,)
+        reference_rejected_logps: Log probabilities of the reference model for the rejected responses. Shape: (batch_size,)
+        beta: Temperature parameter for the DPO loss, typically something in the range of 0.1 to 0.5. We ignore the reference model as beta -> 0.
+        label_smoothing: conservativeness for DPO loss, which assumes that preferences are noisy (flipped with probability label_smoothing)
+        ipo: If True, use the IPO loss instead of the DPO loss.
+        reference_free: If True, we ignore the _provided_ reference model and implicitly use a reference model that assigns equal probability to all responses.
+
+    Returns:
+        A tuple of three tensors: (losses, chosen_rewards, rejected_rewards).
+        The losses tensor contains the DPO loss for each example in the batch.
+        The chosen_rewards and rejected_rewards tensors contain the rewards for the chosen and rejected responses, respectively.
+    """
+    pi_logratios = policy_chosen_logps - policy_rejected_logps
+    # ref_logratios = reference_chosen_logps - reference_rejected_logps
+
+    # if reference_free:
+    #     ref_logratios = 0
+
+    logits = pi_logratios  # also known as h_{\pi_\theta}^{y_w,y_l}
+    # print(logits)
+
+    # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
+    losses = -logsoftmax(beta * logits, 0) * (1 - label_smoothing) - logsoftmax(-beta * logits, 0) * label_smoothing
+
+    # chosen_rewards = beta * (policy_chosen_logps - 0).detach()
+    # rejected_rewards = beta * (policy_rejected_logps - 0).detach()
+
+    return losses

@@ -148,7 +148,10 @@ class Linear(Module):
         ### BEGIN YOUR SOLUTION
         
         # apply linear transformation
-        output = x @ self.weights.value
+        # output = x @ self.weights.value.contiguous()
+        # output = x.contiguous() @ self.weights.value.contiguous()
+        x = x.contiguous()
+        output = x @ self.weights.value.contiguous()
         if self.bias is not None:
             output = output + self.bias.value
 

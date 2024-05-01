@@ -23,8 +23,8 @@ bash compile_cuda.sh
 This project is organized into several directories and files. Below is an overview of the key components:
 
 - `data/`
-  - `imdb_generated_preferences.csv` - This file contains the IMDb dataset with generated preference pairs.
-  - `imdb_subsampled.csv` - A smaller subset of the `imdb_generated_preferences.csv` used for quicker testing and development.
+  - `imdb.json` - This file contains the IMDb dataset with generated preference pairs.
+  - `sampled_data.json` - A smaller subset (10%) of the `imdb.json` used for quicker testing and development.
 
 - `project/`
   - `dpo.py` - Implementation of the Direct Preference Optimization (DPO) algorithm.
@@ -32,7 +32,7 @@ This project is organized into several directories and files. Below is an overvi
   - `no_dpo.py` - Baseline model implementation without DPO for comparison.
 
 - `minitorch/`
-  - `nn.py` - Modified neural network module that includes the `DPO_preference_loss` function to support DPO in MiniTorch.
+  - `nn.py` - Modified neural network module that includes the DPO `preference_loss` function to support DPO in MiniTorch.
 
 ## Usage
 ### Generate the Preference Pair Dataset
